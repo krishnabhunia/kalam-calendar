@@ -42,11 +42,16 @@ CONFIG = {
     "sunrise_mode": "geometric",
     # Which kalams to emit
     "include": ["Rahu Kalam", "Yamagandam", "Gulika Kalam"],
+    # "short" -> event title reads "RK"; "full" -> "Rahu Kalam"
+    "label_style": "short",
     # Minutes before start to alert. None = no alarm (recommended for a
     # subscribed feed; you can add reminders per-event if you import instead).
     "alarm_minutes": None,
     # Mark events as free so they never block your availability
     "transparent": True,
+    # Keep event UIDs independent of city, so changing location updates the
+    # existing events instead of replacing the whole calendar.
+    "stable_uids": True,
 }
 
 # Some presets, for convenience when you move or travel.
@@ -74,11 +79,21 @@ SEGMENT = {
     "Gulika Kalam":[6,  5,  4,  3,  2,  1,  7],
 }
 
+SHORT = {
+    "Rahu Kalam":   "RK",
+    "Yamagandam":   "YG",
+    "Gulika Kalam": "GK",
+}
+
 NOTE = {
     "Rahu Kalam":   "Period ruled by Rahu. Traditionally avoided for beginning new work.",
     "Yamagandam":   "Period ruled by Yama. Traditionally avoided for auspicious beginnings.",
     "Gulika Kalam": "Period ruled by Gulika (son of Shani). Considered inauspicious for new ventures.",
 }
+
+
+def label(name: str, cfg: dict) -> str:
+    return SHORT[name] if cfg.get("label_style", "short") == "short" else name
 
 
 def daylight_segment(d: date, cfg: dict, segment_index: int):
@@ -118,6 +133,19 @@ def utc_stamp(dt: datetime) -> str:
     return dt.astimezone(ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
 
 
+def calname(cfg: dict) -> str:
+    inc = cfg["include"]
+    if len(inc) == 1:
+        return f"{SHORT[inc[0]]} — {cfg['city']}"
+    return f"Kalam — {cfg['city']}"
+
+
+def caldesc(cfg: dict) -> str:
+    inc = cfg["include"]
+    parts = ", ".join(f"{n} ({SHORT[n]})" for n in inc)
+    return f"{parts} for {cfg['city']}"
+
+
 def build_calendar(cfg: dict) -> str:
     tz = ZoneInfo(cfg["timezone"])
     today = datetime.now(tz).date()
@@ -130,8 +158,8 @@ def build_calendar(cfg: dict) -> str:
         "PRODID:-//kalam_ics//Panchang Kalam Timings//EN",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
-        f"X-WR-CALNAME:Kalam Timings — {cfg['city']}",
-        f"X-WR-CALDESC:Rahu Kalam\\, Yamagandam and Gulika Kalam for {cfg['city']}",
+        f"X-WR-CALNAME:{ical_escape(calname(cfg))}",
+        f"X-WR-CALDESC:{ical_escape(caldesc(cfg))}",
         f"X-WR-TIMEZONE:{cfg['timezone']}",
         "REFRESH-INTERVAL;VALUE=DURATION:P1D",
         "X-PUBLISHED-TTL:P1D",
@@ -145,10 +173,16 @@ def build_calendar(cfg: dict) -> str:
             idx = SEGMENT[name][wd]
             start, finish, sunrise, sunset = daylight_segment(d, cfg, idx)
 
-            uid_seed = f"{name}|{d.isoformat()}|{cfg['city']}"
+            # City deliberately excluded so relocating updates events in
+            # place rather than churning every UID. Set stable_uids=False if
+            # you subscribe to several city feeds in ONE Google account.
+            uid_seed = f"{name}|{d.isoformat()}"
+            if not cfg.get("stable_uids", True):
+                uid_seed += f"|{cfg['city']}"
             uid = hashlib.sha1(uid_seed.encode()).hexdigest()[:20] + "@kalam-ics"
 
             desc = (
+                f"{name} ({SHORT[name]})\n"
                 f"{NOTE[name]}\n\n"
                 f"{start.strftime('%I:%M %p').lstrip('0')} – "
                 f"{finish.strftime('%I:%M %p').lstrip('0')} "
@@ -164,7 +198,7 @@ def build_calendar(cfg: dict) -> str:
                 f"DTSTAMP:{utc_stamp(now)}",
                 f"DTSTART:{utc_stamp(start)}",
                 f"DTEND:{utc_stamp(finish)}",
-                f"SUMMARY:{ical_escape(name)}",
+                f"SUMMARY:{ical_escape(label(name, cfg))}",
                 f"DESCRIPTION:{ical_escape(desc)}",
                 f"LOCATION:{ical_escape(cfg['city'])}",
                 "CATEGORIES:Panchang",
@@ -175,7 +209,7 @@ def build_calendar(cfg: dict) -> str:
                 ev += [
                     "BEGIN:VALARM",
                     "ACTION:DISPLAY",
-                    f"DESCRIPTION:{ical_escape(name)} starts soon",
+                    f"DESCRIPTION:{ical_escape(label(name, cfg))} starts soon",
                     f"TRIGGER:-PT{cfg['alarm_minutes']}M",
                     "END:VALARM",
                 ]
@@ -214,6 +248,13 @@ if __name__ == "__main__":
                    help="print one day's timings and exit")
     p.add_argument("--alarm", type=int, help="minutes before start to alert")
     p.add_argument("--sunrise", choices=["geometric", "observational"])
+    p.add_argument("--split", action="store_true",
+                   help="write one file per kalam: rk.ics, yg.ics, gk.ics")
+    p.add_argument("--only", choices=["RK", "YG", "GK"],
+                   help="emit a single kalam")
+    p.add_argument("--labels", choices=["short", "full"])
+    p.add_argument("--outdir", default=".",
+                   help="directory for --split output")
     args = p.parse_args()
 
     cfg = dict(CONFIG)
@@ -230,9 +271,24 @@ if __name__ == "__main__":
         cfg["alarm_minutes"] = args.alarm
     if args.sunrise:
         cfg["sunrise_mode"] = args.sunrise
+    if args.labels:
+        cfg["label_style"] = args.labels
+    if args.only:
+        cfg["include"] = [n for n, c in SHORT.items() if c == args.only]
 
     if args.check:
         check_day(args.check, cfg)
+    elif args.split:
+        import os
+        os.makedirs(args.outdir, exist_ok=True)
+        print(f"Generating 3 feeds for {cfg['city']} "
+              f"({cfg['latitude']}, {cfg['longitude']})")
+        for full, code in SHORT.items():
+            sub = dict(cfg, include=[full])
+            path = os.path.join(args.outdir, f"{code.lower()}.ics")
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(build_calendar(sub))
+            print(f"  wrote {path}")
     else:
         print(f"Generating for {cfg['city']} ({cfg['latitude']}, {cfg['longitude']})")
         with open(cfg["output"], "w", encoding="utf-8", newline="") as f:
