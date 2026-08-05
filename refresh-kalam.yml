@@ -1,0 +1,30 @@
+name: Refresh kalam calendar
+
+on:
+  schedule:
+    - cron: "0 20 1 * *"      # 01:30 IST on the 1st of each month
+  workflow_dispatch:           # lets you trigger it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate feed
+        run: python kalam_ics.py --out docs/kalam.ics
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/kalam.ics
+          git diff --staged --quiet || git commit -m "Refresh kalam feed"
+          git push
