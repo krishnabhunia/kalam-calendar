@@ -42,8 +42,12 @@ CONFIG = {
     "sunrise_mode": "geometric",
     # Which kalams to emit
     "include": ["Rahu Kalam", "Yamagandam", "Gulika Kalam"],
-    # "short" -> event title reads "RK"; "full" -> "Rahu Kalam"
-    "label_style": "short",
+    # Event title style:
+    #   "endtime" -> "- 13:19 R.K"   (Google shows the start, so the row
+    #                                 reads "11:42 - 13:19 R.K")
+    #   "short"   -> "R.K"
+    #   "full"    -> "Rahu Kalam"
+    "label_style": "endtime",
     # Minutes before start to alert. None = no alarm (recommended for a
     # subscribed feed; you can add reminders per-event if you import instead).
     "alarm_minutes": None,
@@ -85,6 +89,12 @@ SHORT = {
     "Gulika Kalam": "GK",
 }
 
+DOTTED = {
+    "Rahu Kalam":   "R.K",
+    "Yamagandam":   "Y.G",
+    "Gulika Kalam": "G.K",
+}
+
 NOTE = {
     "Rahu Kalam":   "Period ruled by Rahu. Traditionally avoided for beginning new work.",
     "Yamagandam":   "Period ruled by Yama. Traditionally avoided for auspicious beginnings.",
@@ -92,8 +102,13 @@ NOTE = {
 }
 
 
-def label(name: str, cfg: dict) -> str:
-    return SHORT[name] if cfg.get("label_style", "short") == "short" else name
+def label(name: str, cfg: dict, finish=None) -> str:
+    style = cfg.get("label_style", "endtime")
+    if style == "full":
+        return name
+    if style == "short" or finish is None:
+        return DOTTED[name]
+    return f"- {finish.strftime('%H:%M')} {DOTTED[name]}"
 
 
 def daylight_segment(d: date, cfg: dict, segment_index: int):
@@ -136,13 +151,13 @@ def utc_stamp(dt: datetime) -> str:
 def calname(cfg: dict) -> str:
     inc = cfg["include"]
     if len(inc) == 1:
-        return f"{SHORT[inc[0]]} — {cfg['city']}"
+        return f"{DOTTED[inc[0]]} — {cfg['city']}"
     return f"Kalam — {cfg['city']}"
 
 
 def caldesc(cfg: dict) -> str:
     inc = cfg["include"]
-    parts = ", ".join(f"{n} ({SHORT[n]})" for n in inc)
+    parts = ", ".join(f"{n} ({DOTTED[n]})" for n in inc)
     return f"{parts} for {cfg['city']}"
 
 
@@ -182,7 +197,7 @@ def build_calendar(cfg: dict) -> str:
             uid = hashlib.sha1(uid_seed.encode()).hexdigest()[:20] + "@kalam-ics"
 
             desc = (
-                f"{name} ({SHORT[name]})\n"
+                f"{name} ({DOTTED[name]})\n"
                 f"{NOTE[name]}\n\n"
                 f"{start.strftime('%I:%M %p').lstrip('0')} – "
                 f"{finish.strftime('%I:%M %p').lstrip('0')} "
@@ -198,7 +213,7 @@ def build_calendar(cfg: dict) -> str:
                 f"DTSTAMP:{utc_stamp(now)}",
                 f"DTSTART:{utc_stamp(start)}",
                 f"DTEND:{utc_stamp(finish)}",
-                f"SUMMARY:{ical_escape(label(name, cfg))}",
+                f"SUMMARY:{ical_escape(label(name, cfg, finish))}",
                 f"DESCRIPTION:{ical_escape(desc)}",
                 f"LOCATION:{ical_escape(cfg['city'])}",
                 "CATEGORIES:Panchang",
@@ -209,7 +224,7 @@ def build_calendar(cfg: dict) -> str:
                 ev += [
                     "BEGIN:VALARM",
                     "ACTION:DISPLAY",
-                    f"DESCRIPTION:{ical_escape(label(name, cfg))} starts soon",
+                    f"DESCRIPTION:{ical_escape(DOTTED[name])} starts soon",
                     f"TRIGGER:-PT{cfg['alarm_minutes']}M",
                     "END:VALARM",
                 ]
@@ -252,7 +267,7 @@ if __name__ == "__main__":
                    help="write one file per kalam: rk.ics, yg.ics, gk.ics")
     p.add_argument("--only", choices=["RK", "YG", "GK"],
                    help="emit a single kalam")
-    p.add_argument("--labels", choices=["short", "full"])
+    p.add_argument("--labels", choices=["endtime", "short", "full"])
     p.add_argument("--outdir", default=".",
                    help="directory for --split output")
     args = p.parse_args()
