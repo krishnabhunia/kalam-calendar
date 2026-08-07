@@ -62,6 +62,8 @@ CONFIG = {
 PRESETS = {
     "Kolkata":   (22.5726, 88.3639, "Asia/Kolkata"),
     "Bhatpara":  (22.8664, 88.4011, "Asia/Kolkata"),
+    "Kalyan":    (19.2403, 73.1305, "Asia/Kolkata"),
+    "Pune":      (18.5204, 73.8567, "Asia/Kolkata"),
     "Bengaluru": (12.9716, 77.5946, "Asia/Kolkata"),
     "Chennai":   (13.0827, 80.2707, "Asia/Kolkata"),
     "Mumbai":    (19.0760, 72.8777, "Asia/Kolkata"),
@@ -70,6 +72,9 @@ PRESETS = {
     "London":    (51.5074, -0.1278, "Europe/London"),
     "New York":  (40.7128, -74.0060, "America/New_York"),
 }
+
+# Cities built by --multi. Each gets its own docs/<slug>/ directory.
+SITES = ["Kolkata", "Kalyan", "Pune"]
 
 # ---------------------------------------------------------------------------
 # Weekday -> which eighth of the daylight span (1-indexed)
@@ -263,6 +268,8 @@ if __name__ == "__main__":
                    help="print one day's timings and exit")
     p.add_argument("--alarm", type=int, help="minutes before start to alert")
     p.add_argument("--sunrise", choices=["geometric", "observational"])
+    p.add_argument("--multi", action="store_true",
+                   help="build every city in SITES into docs/<slug>/")
     p.add_argument("--split", action="store_true",
                    help="write one file per kalam: rk.ics, yg.ics, gk.ics")
     p.add_argument("--only", choices=["RK", "YG", "GK"],
@@ -293,6 +300,21 @@ if __name__ == "__main__":
 
     if args.check:
         check_day(args.check, cfg)
+    elif args.multi:
+        import os
+        print(f"Building {len(SITES)} cities x {len(SHORT)} kalams")
+        for site in SITES:
+            lat, lon, tzname = PRESETS[site]
+            slug = site.lower().replace(" ", "-")
+            base = dict(cfg, city=site, latitude=lat, longitude=lon,
+                        timezone=tzname, stable_uids=False)
+            d = os.path.join(args.outdir, slug)
+            os.makedirs(d, exist_ok=True)
+            for full, code in SHORT.items():
+                path = os.path.join(d, f"{code.lower()}.ics")
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    f.write(build_calendar(dict(base, include=[full])))
+                print(f"  {path}")
     elif args.split:
         import os
         os.makedirs(args.outdir, exist_ok=True)
